@@ -3,8 +3,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats
 from sklearn import linear_model, datasets
+from sklearn.decomposition import PCA
 import seaborn as sns
-import statsmodels.api as sm
+#import statsmodels.api as sm
+from sklearn.preprocessing import normalize
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_absolute_error
 
 def fit_plot_distribution(losses, dist_names):
     """
@@ -58,26 +63,44 @@ def fit_plot_distribution(losses, dist_names):
     ax.set_ybound(lower = 0, upper = y_bins.max()*1.1)
     return (fig, dist_fit_dict)
 
-def fit_OLS(losses, treshold, **kwargs):
+def fit_OLS(losses, ridge_alpha, **kwargs):
 
     if ('cat' in kwargs) and ('cont' in kwargs):
-        dummy_var = pd.get_dummies(kwargs['cat'])
+        dummy_var = pd.get_dummies(kwargs['cat'], drop_first=True)
         all_var = pd.concat([dummy_var, kwargs['cont']], axis=1)
     elif 'cat' in kwargs:
-        all_var = pd.get_dummies(kwargs['cat'])
+        all_var = pd.get_dummies(kwargs['cat'], drop_first=True)
     else:
         all_var = kwargs['cont']
+        
+    if ('apply_pca' in kwargs):
+        if (kwargs['apply_pca'] == True):
+            pca = PCA(whiten=True)
+            all_var = pca.fit_transform(all_var)
+            # Normalize for comptability with setting ridge regularizaiton factor
+            # all_var = normalize(all_var)
+            if ('pca_factors' in kwargs):
+                num_factors_implement = min(kwargs['pca_factors'], all_var.shape[1])
+                all_var = all_var[:,:num_factors_implement]
+    else:
+        # Normalize prior to regression
+        all_var = normalize(all_var)
+    
+    # Add constant to matrix
+    all_var = np.insert(all_var, 0, 1, axis=1)
+    
+    ols_model = Ridge(alpha=ridge_alpha)
+    
+    ols_model.fit(all_var, losses)
+    loss_pred = ols_model.predict(all_var)
 
-    all_var = sm.add_constant(all_var, has_constant='add')
-    ols_model = sm.OLS(losses, all_var)
-    result = ols_model.fit()
-    result.pvalues.sort_values().index
-    df_result = pd.DataFrame(index=result.pvalues.sort_values().index,
-                             data=result.pvalues.sort_values(),
-                             columns=['p_value'])
-    df_result = df_result[df_result.p_value <= treshold]
-
-    loss_pred = result.predict(all_var)
+    R2_score = ols_model.score(all_var, losses)
+    mean_sq_score = mean_squared_error(loss_pred, losses)
+    mean_abs_score = mean_absolute_error(loss_pred, losses)
+    
+    print "R2: {0:.2f}".format(R2_score)
+    print "MSE: {0:.0f}".format(mean_sq_score)
+    print "MAE: {0:.0f}".format(mean_abs_score)
 
     fig = plt.figure()
     ax = fig.add_subplot(111)
@@ -86,4 +109,4 @@ def fit_OLS(losses, treshold, **kwargs):
     ax.set_xbound(upper = losses.max())
     ax.set_title("Predicted vs. Actual losses")
 
-    return (result.summary(), df_result, loss_pred, fig)
+    return (R2_score, mean_sq_score, mean_abs_score, loss_pred, fig)
