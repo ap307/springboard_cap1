@@ -3,10 +3,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats
 from sklearn import linear_model, datasets
+from sklearn.decomposition import PCA
 import seaborn as sns
-import statsmodels.api as sm
+#import statsmodels.api as sm
+from sklearn.preprocessing import normalize
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_absolute_error
+from sklearn.ensemble.gradient_boosting import GradientBoostingRegressor
 
-def fit_plot_distribution(losses, dist_names):
+def fit_plot_distribution(losses, dist_names, log_scale):
     """
     Function takes a vector and fits a list of statsmodels distributions
 
@@ -27,12 +33,18 @@ def fit_plot_distribution(losses, dist_names):
     # Set bins
     train_max_loss  = losses.max()
     train_min_loss  = losses.min()
-    set_bins = np.logspace(np.log10(train_min_loss), np.log10(train_max_loss), 100)
-
+    
     # Create figure to store distribution outputs
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    ax.set_xscale("log")
+    
+    if log_scale==True:
+        set_bins = np.logspace(np.log10(train_min_loss), np.log10(train_max_loss), 100)
+        ax.set_xscale("log")
+    else:
+        set_bins = np.linspace(train_min_loss, train_max_loss, 100)
+
+    # Creaete bins
     y_bins, x_bins, _ = ax.hist(losses,
                             bins=set_bins,
                             facecolor='white',
@@ -56,34 +68,50 @@ def fit_plot_distribution(losses, dist_names):
 
     ax.set_xbound(lower = 0, upper = train_max_loss)
     ax.set_ybound(lower = 0, upper = y_bins.max()*1.1)
-    return (fig, dist_fit_dict)
+    return fig, dist_fit_dict
 
-def fit_OLS(losses, treshold, **kwargs):
+def fit_OLS(losses, test_losses, X_train, X_test, ridge_alpha, apply_pca, **kwargs):
+    
+    all_var = np.array(X_train)
+    test_all_var = np.array(X_test)
+        
+    if apply_pca==True:
+        pca = PCA(whiten=False)
+        # Apply PCA analysis
+        all_var = pca.fit_transform(all_var)
+        test_all_var = pca.transform(test_all_var)
+        if 'pca_factors' in kwargs:
+            num_factors_implement = min(kwargs['pca_factors'], all_var.shape[1])
+            all_var = all_var[:,:num_factors_implement]
+            test_all_var = all_var[:,:num_factors_implement]
+      
+    # Add constant to matrix
+    all_var = np.insert(all_var, 0, values=1, axis=1)
+    test_all_var = np.insert(test_all_var, 0, values=1, axis=1)
 
-    if ('cat' in kwargs) and ('cont' in kwargs):
-        dummy_var = pd.get_dummies(kwargs['cat'])
-        all_var = pd.concat([dummy_var, kwargs['cont']], axis=1)
-    elif 'cat' in kwargs:
-        all_var = pd.get_dummies(kwargs['cat'])
-    else:
-        all_var = kwargs['cont']
+    # Fit Ridge regession model to data
+    # ols_model = Ridge(alpha=ridge_alpha)
+    # ols_model.fit(all_var, losses)
+    
+    ols_model = GradientBoostingRegressor(loss='lad')
+    ols_model.fit(all_var, losses)
+    
+    loss_pred = ols_model.predict(all_var)
+    test_loss_pred = ols_model.predict(test_all_var)
 
-    all_var = sm.add_constant(all_var, has_constant='add')
-    ols_model = sm.OLS(losses, all_var)
-    result = ols_model.fit()
-    result.pvalues.sort_values().index
-    df_result = pd.DataFrame(index=result.pvalues.sort_values().index,
-                             data=result.pvalues.sort_values(),
-                             columns=['p_value'])
-    df_result = df_result[df_result.p_value <= treshold]
-
-    loss_pred = result.predict(all_var)
+    train_R2 = ols_model.score(all_var, losses)
+    train_MABS = mean_absolute_error(loss_pred, losses)
+    test_MABS = mean_absolute_error(test_loss_pred, test_losses)
+    
+    print "Train R2: {0:.2f}".format(train_R2)
+    print "Train MSE: {0:.3f}".format(train_MABS)
+    print "Test MAE: {0:.3f}".format(test_MABS)
 
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    ax.scatter(x=losses, y=loss_pred)
-    ax.set_ybound(upper = loss_pred.max())
-    ax.set_xbound(upper = losses.max())
-    ax.set_title("Predicted vs. Actual losses")
+    ax.scatter(x=test_losses, y=test_loss_pred)
+    ax.set_ybound(upper = test_loss_pred.max())
+    ax.set_xbound(upper = test_losses.max())
+    ax.set_title("Test Predicted vs. Test Actual losses")
 
-    return (result.summary(), df_result, loss_pred, fig)
+    return train_R2, train_MABS, test_MABS, fig, loss_pred, test_loss_pred
