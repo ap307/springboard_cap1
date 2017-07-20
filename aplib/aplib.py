@@ -89,12 +89,13 @@ def fit_OLS(losses, test_losses, X_train, X_test, ridge_alpha, apply_pca, **kwar
     all_var = np.insert(all_var, 0, values=1, axis=1)
     test_all_var = np.insert(test_all_var, 0, values=1, axis=1)
 
-    # Fit Ridge regession model to data
-    # ols_model = Ridge(alpha=ridge_alpha)
-    # ols_model.fit(all_var, losses)
-    
-    ols_model = GradientBoostingRegressor(loss='lad')
+    # Fit Ridge Regession model to data
+    ols_model = Ridge(alpha=ridge_alpha)
     ols_model.fit(all_var, losses)
+    
+    # Fit Gradient Bossting model to data
+    #ols_model = GradientBoostingRegressor(loss='lad')
+    #ols_model.fit(all_var, losses)
     
     loss_pred = ols_model.predict(all_var)
     test_loss_pred = ols_model.predict(test_all_var)
