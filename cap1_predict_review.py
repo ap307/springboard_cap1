@@ -43,7 +43,15 @@ def evalerror(y_pred, y_actual):
 
 evalerror_scorer = make_scorer(evalerror, greater_is_better=False)
 
- 
+# Implement "Fair" objective function (proxy for MAE)
+fair_constant = 0.7
+def fair_obj(y_actual, y_pred):
+    x = (y_pred - y_actual)
+    den = abs(x) + fair_constant
+    grad = fair_constant * x / (den)
+    hess = fair_constant * fair_constant / (den * den)
+    return grad, hess 
+
 # Import data set
 cv_file_loc = os.path.expanduser("cv_results.csv")
 train_file_loc = os.path.expanduser("data/train.csv")
@@ -121,7 +129,7 @@ if PCA_transform==True:
 
 # Run random search over XGB parameters
 # In future test wider band for min_child_weight
-run_searchcv=False
+run_searchcv=True
 if run_searchcv==True: 
     seed = [1981]
     max_depth_search = [10, 12]
@@ -133,8 +141,7 @@ if run_searchcv==True:
     colsample_bylevel_search = [0.75, 1]
     gamma_search = [1]
     alpha_search = [1]
-        
-    XGB_class = xgb.XGBRegressor(objective='reg:linear',
+    XGB_class = xgb.XGBRegressor(objective=fair_obj,
                           n_jobs=1,
                           silent=True,
                           updater='grow_gpu_hist')
@@ -142,24 +149,20 @@ if run_searchcv==True:
     rs_search_grid = {'max_depth': sp_randint(7, 12),
     'n_estimators': sp_randint(600, 1300),
     'learning_rate': [0.01, 0.03, 0.05, 0.1],
-    'min_child_weight': sp_randint(1, 5),
+    'min_child_weight': [50, 75, 100, 125],
     'subsample': sp_uniform(0.5, 0.5),
-    'colsample_bytree': sp_uniform(0.8, 0.2),
-    'colsample_bylevel':  sp_uniform(0.8, 0.2),
+    'colsample_bytree': sp_uniform(0.7, 0.3),
+    'colsample_bylevel':  sp_uniform(0.7, 0.3),
     'gamma': [1, 2, 2.5],
-    'reg_alpha': [1, 1.5, 2, 2.5],
+    'reg_alpha': [1.5, 2, 2.5, 3],
     'seed': seed
     }
-    
     cv = RandomizedSearchCV(XGB_class, verbose=500, scoring=evalerror_scorer, cv=3,
                             n_iter=200, param_distributions=rs_search_grid, random_state=1, refit=True)
-    
+    now = datetime.now()
     cv.fit(all_train_data, all_train_losses)
-    
     pd.DataFrame(data=cv.cv_results_).to_csv(cv_file_loc)
-    
     print cv.cv_results_
-    
     print "Saving best estimator"
     joblib.dump(cv.best_estimator_, 'RandomSearchXGB.pkl')
 
@@ -171,13 +174,12 @@ cv_results = pd.read_csv(cv_file_loc)
 xgb_best_params = ast.literal_eval(cv_results[cv_results["rank_test_score"]==1]["params"].iloc[0])
 
 print "Re-fitting XGB with CPU only"
-XGB_class = xgb.XGBRegressor(objective='reg:linear',
+XGB_class_refit = xgb.XGBRegressor(objective=fair_obj,
                           n_jobs=-1,
                           silent=False,
                           **xgb_best_params)
-
-XGB_class.fit(all_train_data, all_train_losses)
-all_test_loses_pred = inv_transform_losses(XGB_class.predict(all_test_data))
+XGB_class_refit.fit(all_train_data, all_train_losses)
+all_test_loses_pred = inv_transform_losses(XGB_class_refit.predict(all_test_data))
 
 # Save results
 now = datetime.now()
@@ -185,7 +187,7 @@ ids = all_test_data_raw.iloc[:,0].values.astype(np.int32)
 result_fixed = pd.DataFrame(all_test_loses_pred, columns=['loss'])
 result_fixed["id"] = ids
 result_fixed = result_fixed.set_index("id")
-sub_file = 'submission_RS-3CV-xgb_' + str(now.strftime("%Y-%m-%d-%H-%M")) + '.csv'
+sub_file = 'submission_RS-CV-xgb_' + str(now.strftime("%Y-%m-%d-%H-%M")) + '.csv'
 print("\n Writing submission: %s" % sub_file)
 result_fixed.to_csv(sub_file, index=True, index_label='id')
 
