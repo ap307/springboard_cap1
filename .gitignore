@@ -3,3 +3,7 @@ data/
 *.xlsx
 *.csv
 .ipynb_checkpoints/
+*.pkl
+!cv_results.csv
+!submission_RS*.csv
+RandomSearchXGB.pkl
